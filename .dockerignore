@@ -14,4 +14,3 @@ server/node_modules
 *.md
 !README.md
 todo.md
-patches
