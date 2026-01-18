@@ -356,6 +356,8 @@ export default function PatientDetail() {
   const [showUnit, setShowUnit] = useState(true);
   const [showReference, setShowReference] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  // "__all__" = 全て（フィルタなし）
+  const [selectedMatrixCategory, setSelectedMatrixCategory] = useState<string>("__all__");
   const hasInitializedDates = useRef(false);
   const categoryInitializedDates = useRef<Set<"身体測定" | "検査結果" | "画像">>(new Set());
 
@@ -448,6 +450,7 @@ export default function PatientDetail() {
   const createTestResultMutation = trpc.testResults.bulkCreate.useMutation();
   const updatePatientMutation = trpc.patients.update.useMutation();
   const updateTestResultMutation = trpc.testResults.update.useMutation();
+  const deleteTestResultMutation = trpc.testResults.delete.useMutation();
   const createMedicationMutation = trpc.medications.create.useMutation();
   const [isAddMedicationOpen, setIsAddMedicationOpen] = useState(false);
   const [isImageDialogOpen, setIsImageDialogOpen] = useState(false);
@@ -499,17 +502,49 @@ export default function PatientDetail() {
     });
   }, [allResults, mainCategory]);
 
+  // マトリックスに表示する検査項目（未入力も含めて表示するため、結果ではなく testItems を基準にする）
+  const matrixBaseItems = useMemo(() => {
+    if (!testItems) return [];
+    return testItems.filter(item => categorizeItem(item.itemName) === mainCategory);
+  }, [testItems, mainCategory]);
+
+  const matrixCategories = useMemo(() => {
+    if (mainCategory !== "検査結果") return [];
+    const cats = Array.from(new Set(matrixBaseItems.map(i => i.category).filter(Boolean)));
+    return cats.sort((a, b) => a.localeCompare(b));
+  }, [mainCategory, matrixBaseItems]);
+
   const { matrix, sortedDates } = useMemo(() => {
     const matrixData: TestResultMatrix = {};
     const allDates = new Set<string>();
 
+    // 日付は、この大カテゴリ内に存在する結果から作る（カテゴリ選択で日付列が消えないようにする）
     filteredResults.forEach(r => {
-      const dateStr = new Date(r.result.testDate).toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" }).replace(/\//g, ".");
+      const dateStr = new Date(r.result.testDate)
+        .toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" })
+        .replace(/\//g, ".");
       allDates.add(dateStr);
-      if (!matrixData[r.result.itemId]) {
-        matrixData[r.result.itemId] = { item: r.item, results: {} };
+    });
+
+    // 行（検査項目）は testItems を基準に作成し、未入力でも表示する
+    const itemsForMatrix =
+      mainCategory === "検査結果" && selectedMatrixCategory !== "__all__"
+        ? matrixBaseItems.filter(i => i.category === selectedMatrixCategory)
+        : matrixBaseItems;
+
+    itemsForMatrix.forEach(item => {
+      matrixData[item.id] = { item, results: {} };
+    });
+
+    // 既存結果をマトリックスへ反映
+    filteredResults.forEach(r => {
+      const dateStr = new Date(r.result.testDate)
+        .toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" })
+        .replace(/\//g, ".");
+      const row = matrixData[r.result.itemId];
+      if (row) {
+        row.results[dateStr] = r.result;
       }
-      matrixData[r.result.itemId].results[dateStr] = r.result;
     });
 
     const sorted = Array.from(allDates).sort((a, b) => {
@@ -519,7 +554,7 @@ export default function PatientDetail() {
     });
 
     return { matrix: matrixData, sortedDates: sorted };
-  }, [filteredResults]);
+  }, [filteredResults, mainCategory, matrixBaseItems, selectedMatrixCategory]);
 
   // 選択された日付のみをフィルタリング
   const displayedDates = useMemo(() => {
@@ -549,6 +584,56 @@ export default function PatientDetail() {
       return (a.item?.displayOrder || 0) - (b.item?.displayOrder || 0);
     });
   }, [matrix]);
+
+  // カテゴリの「帯（見出し行）」を挿入するための行リスト
+  const groupedSortedItems = useMemo(() => {
+    type ItemRow = { type: "item"; itemId: string; data: any };
+    type CategoryRow = { type: "category"; category: string };
+    type Row = ItemRow | CategoryRow;
+
+    const items: ItemRow[] = sortedItems.map(([itemId, data]) => ({
+      type: "item",
+      itemId,
+      data,
+    }));
+
+    const getCategory = (data: any) => (data?.item?.category ? String(data.item.category) : "その他");
+
+    const grouped = new Map<string, ItemRow[]>();
+    for (const row of items) {
+      const cat = getCategory(row.data);
+      if (!grouped.has(cat)) grouped.set(cat, []);
+      grouped.get(cat)!.push(row);
+    }
+
+    // カテゴリ順：検査結果タブはマスタ由来のカテゴリ順、その他は名称順
+    const catsFromItems = Array.from(grouped.keys());
+    const fallbackCats = catsFromItems.slice().sort((a, b) => a.localeCompare(b));
+
+    const baseOrder =
+      mainCategory === "検査結果"
+        ? selectedMatrixCategory !== "__all__"
+          ? [selectedMatrixCategory]
+          : matrixCategories.length > 0
+            ? matrixCategories
+            : fallbackCats
+        : fallbackCats;
+
+    // baseOrder に載っていないカテゴリ（例: その他）も末尾に追加
+    const orderedCats = [
+      ...baseOrder.filter(cat => grouped.has(cat)),
+      ...fallbackCats.filter(cat => !baseOrder.includes(cat)),
+    ];
+
+    const rows: Row[] = [];
+    for (const cat of orderedCats) {
+      const catItems = grouped.get(cat);
+      if (!catItems || catItems.length === 0) continue;
+      rows.push({ type: "category", category: cat });
+      rows.push(...catItems);
+    }
+    return rows;
+  }, [sortedItems, mainCategory, matrixCategories, selectedMatrixCategory]);
 
   // 身体測定の項目リストを取得
   const physicalMeasurementItems = useMemo(() => {
@@ -823,34 +908,84 @@ export default function PatientDetail() {
     if (!editingDate || !allResults) return;
     
     const formData = new FormData(e.currentTarget);
-    
-    // 編集対象の日付の検査結果を取得
-    // editingDateは "YYYY.MM.DD" 形式
-    const dateParts = editingDate.split(".");
-    const targetDate = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
-    const targetDateStr = targetDate.toISOString().split('T')[0];
-    
-    const resultsForDate = allResults.filter(r => {
-      const resultDate = new Date(r.result.testDate).toISOString().split('T')[0];
-      return resultDate === targetDateStr;
-    });
 
     try {
-      // 各検査結果を並列で更新
-      const updatePromises = resultsForDate.map(async (result) => {
-        const value = formData.get(`item_${result.result.itemId}`) as string;
-        
-        // 値が変更されている場合のみ更新
-        if (value && value.trim() !== "") {
-          return updateTestResultMutation.mutateAsync({
-            id: result.result.id,
-            resultValue: value.trim(),
+      if (!testItems) {
+        toast.error("検査項目が読み込まれていません");
+        return;
+      }
+
+      // 編集対象の日付（bulkCreate に渡す用）
+      const targetDateStr = editingDate.replace(/\./g, "-"); // "YYYY-MM-DD"
+
+      // 編集対象（未入力も含め、検査結果カテゴリの全検査項目）
+      const editableItems = testItems.filter(item => categorizeItem(item.itemName) === "検査結果");
+
+      // 既存結果（この日付）のインデックス
+      const formatDateForComparison = (date: Date | string) => {
+        const d = typeof date === "string" ? new Date(date) : date;
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+        const day = d.getDate();
+        return `${y}.${String(m).padStart(2, "0")}.${String(day).padStart(2, "0")}`;
+      };
+      const existingByItemId = new Map<number, any>();
+      allResults.forEach(r => {
+        if (categorizeItem(r.item?.itemName || "") !== "検査結果") return;
+        const dateStr = formatDateForComparison(r.result.testDate);
+        if (dateStr !== editingDate) return;
+        existingByItemId.set(r.result.itemId, r.result);
+      });
+
+      const updatePromises: Promise<any>[] = [];
+      const deletePromises: Promise<any>[] = [];
+      const createResults: Array<{ itemId: number; resultValue: string; resultComment?: string }> = [];
+
+      for (const item of editableItems) {
+        const raw = formData.get(`item_${item.id}`);
+        const value = typeof raw === "string" ? raw.trim() : "";
+        const existing = existingByItemId.get(item.id);
+
+        // 空欄の場合：既存があれば削除（未入力状態に戻す）
+        if (value === "") {
+          if (existing) {
+            deletePromises.push(deleteTestResultMutation.mutateAsync({ id: existing.id }));
+          }
+          continue;
+        }
+
+        // 値の簡易バリデーション（bulkCreate は数値以外を弾く）
+        if (Number.isNaN(Number(value))) {
+          toast.error(`数値として解釈できない値があります: ${item.itemName} = "${value}"`);
+          return;
+        }
+
+        // 既存があれば更新、なければ新規作成
+        if (existing) {
+          updatePromises.push(
+            updateTestResultMutation.mutateAsync({
+              id: existing.id,
+              resultValue: value,
+            })
+          );
+        } else {
+          createResults.push({
+            itemId: item.id,
+            resultValue: value,
+            resultComment: undefined,
           });
         }
-        return Promise.resolve();
-      });
-      
-      await Promise.all(updatePromises);
+      }
+
+      await Promise.all([...updatePromises, ...deletePromises]);
+
+      if (createResults.length > 0) {
+        await createTestResultMutation.mutateAsync({
+          patientId,
+          testDate: targetDateStr,
+          results: createResults,
+        });
+      }
       
       toast.success("検査結果を更新しました");
       setIsEditResultOpen(false);
@@ -1131,7 +1266,7 @@ export default function PatientDetail() {
 
               {/* 検査結果タブ */}
               <TabsContent value="検査結果">
-                {resultsLoading ? (
+                {resultsLoading || testItemsLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                   </div>
@@ -1139,6 +1274,31 @@ export default function PatientDetail() {
                   <div className="flex gap-4 h-[calc(100vh-400px)] min-h-[600px]">
                     {/* 日付選択パネル（左側） */}
                     <div className="w-64 flex-shrink-0 border rounded-lg p-4 bg-muted/30 flex flex-col">
+                      {/* カテゴリ選択 */}
+                      <div className="mb-4">
+                        <Label className="text-sm font-semibold">カテゴリ</Label>
+                        <div className="mt-2">
+                          <Select
+                            value={selectedMatrixCategory}
+                            onValueChange={(value) => {
+                              setSelectedMatrixCategory(value);
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="カテゴリを選択" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__all__">全て</SelectItem>
+                              {matrixCategories.map((cat) => (
+                                <SelectItem key={cat} value={cat}>
+                                  {cat}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
                       <div className="flex items-center justify-between mb-3">
                         <h3 className="font-semibold text-sm">日付選択</h3>
                         <div className="flex gap-1">
@@ -1259,97 +1419,114 @@ export default function PatientDetail() {
                               </tr>
                             </thead>
                             <tbody className="bg-background divide-y divide-border">
-                              {sortedItems.map(([itemId, data]) => (
-                                <tr key={itemId} className="hover:bg-muted/20 transition-colors">
-                                  <td className="sticky left-0 z-10 bg-background p-3 font-medium border-r min-w-[200px] whitespace-nowrap shadow-[2px_0_4px_rgba(0,0,0,0.1)]">
-                                    {data.item?.itemName || "-"}
-                                  </td>
-                                  {showUnit && (
-                                    <td className="sticky left-[200px] z-10 bg-background p-2 text-center text-muted-foreground border-r text-xs shadow-[2px_0_4px_rgba(0,0,0,0.1)]">
-                                      {data.item?.unit || "-"}
+                              {groupedSortedItems.map((row) => {
+                                const colSpan = 1 + (showUnit ? 1 : 0) + (showReference ? 1 : 0) + displayedDates.length;
+
+                                if (row.type === "category") {
+                                  return (
+                                    <tr key={`cat-${row.category}`}>
+                                      <td
+                                        colSpan={colSpan}
+                                        className="bg-muted/60 text-foreground font-semibold px-3 py-2"
+                                      >
+                                        {row.category}
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+
+                                const { itemId, data } = row;
+
+                                return (
+                                  <tr key={itemId} className="hover:bg-muted/20 transition-colors">
+                                    <td className="sticky left-0 z-10 bg-background p-3 font-medium border-r min-w-[200px] whitespace-nowrap shadow-[2px_0_4px_rgba(0,0,0,0.1)]">
+                                      {data.item?.itemName || "-"}
                                     </td>
-                                  )}
-                                  {showReference && (
-                                    <td className={`sticky ${showUnit ? 'left-[264px]' : 'left-[200px]'} z-10 bg-background p-2 text-center text-xs text-muted-foreground border-r whitespace-nowrap shadow-[2px_0_4px_rgba(0,0,0,0.1)]`}>
-                                      {(() => {
-                                        const { refMin, refMax } = getReferenceValues(data.item);
-                                        if (refMin != null && refMax != null) {
-                                          return `${refMin}~${refMax}`;
-                                        } else if (refMin != null) {
-                                          return `≥${refMin}`;
-                                        } else if (refMax != null) {
-                                          return `≤${refMax}`;
+                                    {showUnit && (
+                                      <td className="sticky left-[200px] z-10 bg-background p-2 text-center text-muted-foreground border-r text-xs shadow-[2px_0_4px_rgba(0,0,0,0.1)]">
+                                        {data.item?.unit || "-"}
+                                      </td>
+                                    )}
+                                    {showReference && (
+                                      <td className={`sticky ${showUnit ? 'left-[264px]' : 'left-[200px]'} z-10 bg-background p-2 text-center text-xs text-muted-foreground border-r whitespace-nowrap shadow-[2px_0_4px_rgba(0,0,0,0.1)]`}>
+                                        {(() => {
+                                          const { refMin, refMax } = getReferenceValues(data.item);
+                                          if (refMin != null && refMax != null) {
+                                            return `${refMin}~${refMax}`;
+                                          } else if (refMin != null) {
+                                            return `≥${refMin}`;
+                                          } else if (refMax != null) {
+                                            return `≤${refMax}`;
+                                          }
+                                          return "-";
+                                        })()}
+                                      </td>
+                                    )}
+                                    {displayedDates.map((date) => {
+                                      const result = data.results[date];
+                                      const resultValueStr = result && result.resultValue != null ? String(result.resultValue) : null;
+                                      const cellColor = result ? getCellColor(
+                                        resultValueStr,
+                                        data.item,
+                                        data.item?.itemName // デバッグ用に項目名を渡す
+                                      ) : "";
+
+                                      // 基準値を取得して文字列に変換
+                                      const { refMin, refMax } = getReferenceValues(data.item);
+                                      const refMinStr = refMin != null ? String(refMin).trim() : null;
+                                      const refMaxStr = refMax != null ? String(refMax).trim() : null;
+
+                                      // デバッグ用: 基準値がある場合のみ詳細ログ（基準値外の場合は必ずログ出力）
+                                      if (import.meta.env.DEV && result && refMinStr && refMaxStr) {
+                                        const numValue = Number(resultValueStr);
+                                        const minValue = Number(refMinStr);
+                                        const maxValue = Number(refMaxStr);
+                                        const isOutOfRange = !isNaN(numValue) && !isNaN(minValue) && !isNaN(maxValue) &&
+                                          (numValue < minValue || numValue > maxValue);
+
+                                        // 基準値外の場合は必ずログ出力、基準値内の場合は10%の確率でログ出力
+                                        if (isOutOfRange || Math.random() < 0.1) {
+                                          console.log('Cell Debug Info:', {
+                                            itemName: data.item?.itemName,
+                                            date,
+                                            resultValue: result.resultValue,
+                                            resultValueStr,
+                                            resultValueType: typeof result.resultValue,
+                                            numValue,
+                                            referenceMin: data.item?.referenceMin,
+                                            refMinStr,
+                                            referenceMinType: typeof data.item?.referenceMin,
+                                            minValue,
+                                            referenceMax: data.item?.referenceMax,
+                                            refMaxStr,
+                                            referenceMaxType: typeof data.item?.referenceMax,
+                                            maxValue,
+                                            isOutOfRange,
+                                            cellColor,
+                                            'cellColor length': cellColor.length,
+                                            'hasRefMin': !!refMinStr,
+                                            'hasRefMax': !!refMaxStr
+                                          });
                                         }
-                                        return "-";
-                                      })()}
-                                    </td>
-                                  )}
-                                  {displayedDates.map((date) => {
-                                    const result = data.results[date];
-                                    const resultValueStr = result && result.resultValue != null ? String(result.resultValue) : null;
-                                    const cellColor = result ? getCellColor(
-                                      resultValueStr,
-                                      data.item,
-                                      data.item?.itemName // デバッグ用に項目名を渡す
-                                    ) : "";
-                                    
-                                    // 基準値を取得して文字列に変換
-                                    const { refMin, refMax } = getReferenceValues(data.item);
-                                    const refMinStr = refMin != null ? String(refMin).trim() : null;
-                                    const refMaxStr = refMax != null ? String(refMax).trim() : null;
-                                    
-                                    // デバッグ用: 基準値がある場合のみ詳細ログ（基準値外の場合は必ずログ出力）
-                                    if (import.meta.env.DEV && result && refMinStr && refMaxStr) {
-                                      const numValue = Number(resultValueStr);
-                                      const minValue = Number(refMinStr);
-                                      const maxValue = Number(refMaxStr);
-                                      const isOutOfRange = !isNaN(numValue) && !isNaN(minValue) && !isNaN(maxValue) && 
-                                        (numValue < minValue || numValue > maxValue);
-                                      
-                                      // 基準値外の場合は必ずログ出力、基準値内の場合は10%の確率でログ出力
-                                      if (isOutOfRange || Math.random() < 0.1) {
-                                        console.log('Cell Debug Info:', {
-                                          itemName: data.item?.itemName,
-                                          date,
-                                          resultValue: result.resultValue,
-                                          resultValueStr,
-                                          resultValueType: typeof result.resultValue,
-                                          numValue,
-                                          referenceMin: data.item?.referenceMin,
-                                          refMinStr,
-                                          referenceMinType: typeof data.item?.referenceMin,
-                                          minValue,
-                                          referenceMax: data.item?.referenceMax,
-                                          refMaxStr,
-                                          referenceMaxType: typeof data.item?.referenceMax,
-                                          maxValue,
-                                          isOutOfRange,
-                                          cellColor,
-                                          'cellColor length': cellColor.length,
-                                          'hasRefMin': !!refMinStr,
-                                          'hasRefMax': !!refMaxStr
-                                        });
                                       }
-                                    }
-                                    
-                                    return (
-                                      <td 
-                                        key={date} 
-                                        className={`p-3 text-center border-r ${cellColor} cursor-pointer hover:bg-muted/30 transition-colors`}
-                                        onClick={() => {
-                                          if (result) {
+
+                                      return (
+                                        <td
+                                          key={date}
+                                          className={`p-3 text-center border-r ${cellColor} cursor-pointer hover:bg-muted/30 transition-colors`}
+                                          onClick={() => {
                                             setEditingDate(date);
                                             setIsEditResultOpen(true);
-                                          }
-                                        }}
-                                        title={result ? "クリックして編集" : ""}
-                                      >
-                                        {result ? result.resultValue : "-"}
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                              ))}
+                                          }}
+                                          title="クリックして編集"
+                                        >
+                                          {result ? result.resultValue : "-"}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -1724,71 +1901,78 @@ export default function PatientDetail() {
               </DialogHeader>
               <div className="grid gap-6 py-4">
                 {editingDate && allResults ? (() => {
+                  if (!testItems) {
+                    return <p className="text-center text-muted-foreground py-8">検査項目を読み込んでいます...</p>;
+                  }
+
                   const dateParts = editingDate.split(".");
                   if (dateParts.length !== 3) {
                     return <p className="text-center text-muted-foreground py-8">日付の形式が正しくありません</p>;
                   }
-                  
-                  // editingDateは "YYYY.MM.DD" 形式（例: "2024.01.15"）
-                  // データベースの日付と同じ形式で比較する
+
+                  // DBの日付と同じ粒度で比較（matrixで使用している "YYYY.MM.DD" 形式）
                   const formatDateForComparison = (date: Date | string) => {
-                    const d = typeof date === 'string' ? new Date(date) : date;
+                    const d = typeof date === "string" ? new Date(date) : date;
                     const y = d.getFullYear();
                     const m = d.getMonth() + 1;
                     const day = d.getDate();
-                    // matrixで使用している形式と同じ "YYYY.MM.DD" 形式に変換
-                    return `${y}.${String(m).padStart(2, '0')}.${String(day).padStart(2, '0')}`;
+                    return `${y}.${String(m).padStart(2, "0")}.${String(day).padStart(2, "0")}`;
                   };
-                  
-                  const resultsForDate = allResults.filter(r => {
+
+                  // 既存結果（この日付）のインデックス
+                  const existingByItemId = new Map<number, any>();
+                  allResults.forEach(r => {
+                    if (categorizeItem(r.item?.itemName || "") !== "検査結果") return;
                     const resultDateStr = formatDateForComparison(r.result.testDate);
-                    return resultDateStr === editingDate;
+                    if (resultDateStr !== editingDate) return;
+                    existingByItemId.set(r.result.itemId, r.result);
                   });
 
-                  if (resultsForDate.length === 0) {
-                    return <p className="text-center text-muted-foreground py-8">この日の検査結果が見つかりませんでした</p>;
-                  }
+                  // 未入力も含めて全項目を編集対象にする（検査結果カテゴリのみ）
+                  const editableItems = testItems
+                    .filter(item => categorizeItem(item.itemName) === "検査結果")
+                    .slice()
+                    .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
                   // カテゴリ別にグループ化
-                  const resultsByCategory: { [key: string]: typeof resultsForDate } = {};
-                  resultsForDate.forEach(r => {
-                    const cat = r.item?.category || "その他";
-                    if (!resultsByCategory[cat]) {
-                      resultsByCategory[cat] = [];
-                    }
-                    resultsByCategory[cat].push(r);
+                  const itemsByCategory = new Map<string, typeof editableItems>();
+                  editableItems.forEach(item => {
+                    const cat = item.category || "その他";
+                    if (!itemsByCategory.has(cat)) itemsByCategory.set(cat, []);
+                    itemsByCategory.get(cat)!.push(item);
                   });
+
+                  const sortedCats = Array.from(itemsByCategory.keys()).sort((a, b) => a.localeCompare(b));
 
                   return (
                     <>
-                      {Object.entries(resultsByCategory).map(([cat, categoryResults]) => (
+                      {sortedCats.map((cat) => (
                         <div key={cat} className="space-y-3">
                           <h3 className="text-lg font-semibold text-indigo-600">{cat}</h3>
                           <div className="grid grid-cols-2 gap-4">
-                            {categoryResults.map((r) => (
-                              <div key={r.result.id} className="grid gap-1.5">
-                                <Label htmlFor={`item_${r.result.itemId}`} className="text-sm">
-                                  {r.item?.itemName} {r.item?.unit && `(${r.item.unit})`}
-                                  {(() => {
-                                    const { refMin, refMax } = getReferenceValues(r.item);
-                                    if (refMin != null && refMax != null) {
-                                      return (
-                                        <span className="text-xs text-muted-foreground ml-2">
-                                          基準値: {refMin}~{refMax}
-                                        </span>
-                                      );
-                                    }
-                                    return null;
-                                  })()}
-                                </Label>
-                                <Input 
-                                  id={`item_${r.result.itemId}`} 
-                                  name={`item_${r.result.itemId}`} 
-                                  type="text" 
-                                  defaultValue={r.result.resultValue ? String(r.result.resultValue) : ""}
-                                />
-                              </div>
-                            ))}
+                            {(itemsByCategory.get(cat) || []).map((item) => {
+                              const existing = existingByItemId.get(item.id);
+                              const { refMin, refMax } = getReferenceValues(item);
+                              return (
+                                <div key={item.id} className="grid gap-1.5">
+                                  <Label htmlFor={`item_${item.id}`} className="text-sm">
+                                    {item.itemName} {item.unit && `(${item.unit})`}
+                                    {refMin != null && refMax != null ? (
+                                      <span className="text-xs text-muted-foreground ml-2">
+                                        基準値: {refMin}~{refMax}
+                                      </span>
+                                    ) : null}
+                                  </Label>
+                                  <Input
+                                    id={`item_${item.id}`}
+                                    name={`item_${item.id}`}
+                                    type="text"
+                                    defaultValue={existing?.resultValue != null ? String(existing.resultValue) : ""}
+                                    placeholder={existing ? undefined : "未入力"}
+                                  />
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       ))}
