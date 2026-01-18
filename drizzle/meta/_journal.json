@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1766605718067,
+      "tag": "0000_lonely_silvermane",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1766605877417,
+      "tag": "0001_workable_trauma",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1768703630759,
+      "tag": "0002_free_colonel_america",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+node_modules
+dist
+.git
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+coverage
+.vscode
+.idea
+client/node_modules
+server/node_modules
+*.md
+!README.md
+todo.md
+patches
