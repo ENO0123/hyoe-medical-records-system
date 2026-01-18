@@ -12,14 +12,20 @@ export async function setupVite(app: Express, server: Server) {
     allowedHosts: true as const,
   };
 
-  // 動的に vite.config.ts をインポート（開発時のみ）
-  const viteConfig = await import("../../vite.config");
-
+  // vite.config.ts を使わずに、最小限の設定のみ（開発時のみ）
+  // これにより、esbuild のバンドル時に vite.config.ts が含まれない
+  const rootPath = path.resolve(import.meta.dirname, "../..");
   const vite = await createViteServer({
-    ...viteConfig.default,
     configFile: false,
+    root: path.resolve(rootPath, "client"),
     server: serverOptions,
     appType: "custom",
+    resolve: {
+      alias: {
+        "@": path.resolve(rootPath, "client", "src"),
+        "@shared": path.resolve(rootPath, "shared"),
+      },
+    },
   });
 
   app.use(vite.middlewares);
