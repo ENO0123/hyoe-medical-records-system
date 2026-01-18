@@ -25,6 +25,7 @@ ENV PORT=3000
 
 # 本番用の依存関係のみインストール
 COPY package.json pnpm-lock.yaml ./
+COPY patches ./patches
 RUN pnpm install --prod --frozen-lockfile
 
 # ビルド成果物をコピー
