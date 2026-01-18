@@ -3,9 +3,12 @@ import fs from "fs";
 import { type Server } from "http";
 import { nanoid } from "nanoid";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 
 export async function setupVite(app: Express, server: Server) {
+  // 動的インポートでviteを読み込む（開発時のみ）
+  // これにより、本番環境ではviteがインストールされていなくてもエラーにならない
+  const { createServer: createViteServer } = await import("vite");
+  
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },
