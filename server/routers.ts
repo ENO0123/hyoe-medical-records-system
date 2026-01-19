@@ -815,6 +815,9 @@ export const appRouter = router({
           input.itemId,
           input.testDate
         );
+        console.log(
+          `[testResultImages.list] patientId=${input.patientId} itemId=${input.itemId} testDate=${input.testDate ?? ""} -> ${images.length}`
+        );
         // gdrive: の場合は、認証付き配信エンドポイントに差し替える（フロント変更を最小化）
         return await Promise.all(
           images.map(async img => {
@@ -853,6 +856,9 @@ export const appRouter = router({
         mimeType: z.string(),
       }))
       .mutation(async ({ input, ctx }) => {
+        console.log(
+          `[testResultImages.upload] start patientId=${input.patientId} itemId=${input.itemId} testDate=${input.testDate} fileName=${input.fileName} mimeType=${input.mimeType}`
+        );
         // Check access permission
         const patient = await db.getPatientById(input.patientId);
         if (!patient) {
@@ -898,7 +904,7 @@ export const appRouter = router({
         }
         
         // Save to database
-        await db.createTestResultImage({
+        const insertResult = await db.createTestResultImage({
           imageId: nanoid(),
           patientId: input.patientId,
           testResultId: input.testResultId,
@@ -911,6 +917,9 @@ export const appRouter = router({
           mimeType: input.mimeType,
           createdBy: ctx.user.id,
         });
+        console.log(
+          `[testResultImages.upload] saved patientId=${input.patientId} itemId=${input.itemId} testDate=${input.testDate} imageUrl=${String(imageUrl).slice(0, 40)} insert=${JSON.stringify(insertResult)}`
+        );
         return { success: true };
       }),
     

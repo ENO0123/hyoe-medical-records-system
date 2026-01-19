@@ -860,13 +860,8 @@ export default function PatientDetail() {
         toast.success(successMessage);
         setIsAddResultOpen(false);
         refetchResults();
-        // 画像データも再取得
-        if (allImages) {
-          utils.testResultImages.list.invalidate({
-            patientId,
-            itemId: 0,
-          });
-        }
+        // 画像データも再取得（フォーム登録は画像タブ以外から行われることが多いので無条件でキャッシュを無効化）
+        await utils.testResultImages.list.invalidate();
         // フォームをリセット
         (e.target as HTMLFormElement).reset();
       } else {
