@@ -8,6 +8,7 @@ import * as db from "./db";
 import { TRPCError } from "@trpc/server";
 import { driveDeleteFile, driveUploadImage } from "./googleDrive";
 import { ENV } from "./_core/env";
+import { createImageAccessToken } from "./_core/imageAccessToken";
 import bcrypt from "bcrypt";
 import { sdk } from "./_core/sdk";
 
@@ -815,12 +816,24 @@ export const appRouter = router({
           input.testDate
         );
         // gdrive: の場合は、認証付き配信エンドポイントに差し替える（フロント変更を最小化）
-        return images.map((img) => {
-          if (typeof img.imageUrl === "string" && img.imageUrl.startsWith("gdrive:")) {
-            return { ...img, imageUrl: `/api/test-result-images/${img.id}/content` };
-          }
-          return img;
-        });
+        return await Promise.all(
+          images.map(async img => {
+            if (typeof img.imageUrl === "string" && img.imageUrl.startsWith("gdrive:")) {
+              // 画像配信は cookie 認証が基本だが、ブラウザの都合で送られないケースに備え
+              // list（=認証済み）で短命トークンを付与しておく。
+              const token = await createImageAccessToken({
+                userId: ctx.user.id,
+                imageRowId: img.id,
+                expiresInSeconds: 60 * 60, // 1 hour
+              });
+              return {
+                ...img,
+                imageUrl: `/api/test-result-images/${img.id}/content?token=${encodeURIComponent(token)}`,
+              };
+            }
+            return img;
+          })
+        );
       }),
     
     get: protectedProcedure

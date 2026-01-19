@@ -2258,6 +2258,7 @@ export default function PatientDetail() {
                       <img
                         src={image.imageUrl}
                         alt={image.fileName || "画像"}
+                        crossOrigin="use-credentials"
                         className="w-full h-64 object-contain bg-muted"
                       />
                       <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">

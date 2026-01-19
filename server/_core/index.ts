@@ -10,6 +10,7 @@ import { serveStatic } from "./vite";
 import { sdk } from "./sdk";
 import * as db from "../db";
 import { driveGetFileStream } from "../googleDrive";
+import { verifyImageAccessToken } from "./imageAccessToken";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -45,8 +46,29 @@ async function startServer() {
     try {
       user = await sdk.authenticateRequest(req);
     } catch {
-      res.status(401).send("Unauthorized");
-      return;
+      // cookie 認証ができない場合（例: サブリソースでcookieが送られない等）は、
+      // list で発行した短命トークンで認証を試みる。
+      try {
+        const id = Number(req.params.id);
+        const token = typeof req.query.token === "string" ? req.query.token : "";
+        if (!Number.isFinite(id) || !token) {
+          res.status(401).send("Unauthorized");
+          return;
+        }
+        const { userId } = await verifyImageAccessToken({
+          token,
+          expectedImageRowId: id,
+        });
+        const u = await db.getUserById(userId);
+        if (!u) {
+          res.status(401).send("Unauthorized");
+          return;
+        }
+        user = u as any;
+      } catch {
+        res.status(401).send("Unauthorized");
+        return;
+      }
     }
 
     try {
