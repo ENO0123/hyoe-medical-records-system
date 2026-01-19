@@ -18,7 +18,13 @@ function normalizePrivateKey(value: string): string {
   ) {
     v = v.slice(1, -1);
   }
-  v = v.replace(/\\n/g, "\n").replace(/\r\n/g, "\n");
+  // 二重エスケープ（\\n）→ 実改行、通常エスケープ（\n）→ 実改行 の順に処理する
+  v = v
+    .replace(/\\\\r\\\\n/g, "\n")
+    .replace(/\\\\n/g, "\n")
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\r\n/g, "\n");
   return v;
 }
 
