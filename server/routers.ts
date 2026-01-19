@@ -890,7 +890,8 @@ export const appRouter = router({
           patientId: input.patientId,
           testResultId: input.testResultId,
           itemId: input.itemId,
-          testDate: new Date(input.testDate),
+          // DATEカラムは文字列で渡してTZ影響を回避（YYYY-MM-DD）
+          testDate: input.testDate as any,
           imageUrl: imageUrl,
           fileName: input.fileName,
           fileSize: buffer.length,

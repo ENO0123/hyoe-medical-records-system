@@ -1638,7 +1638,9 @@ export async function getTestResultImagesByPatientAndItem(
   }
   
   if (testDate) {
-    conditions.push(eq(testResultImages.testDate, new Date(testDate)));
+    // DATEカラムの比較で Date オブジェクトを使うと、環境TZの影響で日付ズレが起きることがある。
+    // 文字列（YYYY-MM-DD）として比較してズレを避ける。
+    conditions.push(sql`${testResultImages.testDate} = ${testDate}`);
   }
   
   return await db.select().from(testResultImages)
