@@ -8,6 +8,20 @@ type DriveConfig = {
   folderId: string;
 };
 
+function tryParseServiceAccountJson(value: string): {
+  client_email?: unknown;
+  private_key?: unknown;
+} | null {
+  const v = value.trim();
+  // JSON丸ごと貼り付けを許容（Railwayは複数行valueも入る）
+  if (!v.startsWith("{") && !v.includes('"private_key"')) return null;
+  try {
+    return JSON.parse(v) as any;
+  } catch {
+    return null;
+  }
+}
+
 function normalizePrivateKey(value: string): string {
   // Railway等で貼り付けた際にクオートで囲まれてしまうケースや、
   // \n を含む1行文字列として保存されるケースに対応する。
@@ -29,8 +43,8 @@ function normalizePrivateKey(value: string): string {
 }
 
 function getDriveConfig(): DriveConfig | null {
-  const clientEmail = ENV.googleServiceAccountEmail;
-  const privateKey = ENV.googleServiceAccountPrivateKey;
+  let clientEmail = ENV.googleServiceAccountEmail;
+  let privateKey = ENV.googleServiceAccountPrivateKey;
   const folderId = ENV.googleDriveFolderId;
 
   if (!clientEmail || !privateKey || !folderId) {
@@ -40,12 +54,25 @@ function getDriveConfig(): DriveConfig | null {
     );
   }
 
+  // private key env に JSON丸ごとが入っていた場合はそこから抽出する
+  const maybeJson = tryParseServiceAccountJson(privateKey);
+  if (maybeJson) {
+    const jsonEmail = maybeJson.client_email;
+    const jsonKey = maybeJson.private_key;
+    if (typeof jsonEmail === "string" && jsonEmail.trim()) {
+      clientEmail = jsonEmail.trim();
+    }
+    if (typeof jsonKey === "string" && jsonKey.trim()) {
+      privateKey = jsonKey;
+    }
+  }
+
   return { clientEmail, privateKey: normalizePrivateKey(privateKey), folderId };
 }
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const DRIVE_UPLOAD_URL =
-  "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id";
+  "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id&supportsAllDrives=true";
 
 let _cachedToken: { token: string; expiresAtMs: number } | null = null;
 
@@ -191,7 +218,7 @@ export async function driveUploadImage(params: {
 export async function driveDeleteFile(fileId: string): Promise<void> {
   const token = await getAccessToken();
   const res = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`,
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`,
     { method: "DELETE", headers: { authorization: `Bearer ${token}` } }
   );
   if (!res.ok && res.status !== 404) {
@@ -208,7 +235,7 @@ export async function driveGetFileStream(fileId: string): Promise<{
 }> {
   const token = await getAccessToken();
   const res = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`,
     { headers: { authorization: `Bearer ${token}` } }
   );
 
