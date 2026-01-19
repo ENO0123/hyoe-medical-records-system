@@ -8,6 +8,20 @@ type DriveConfig = {
   folderId: string;
 };
 
+function normalizePrivateKey(value: string): string {
+  // Railway等で貼り付けた際にクオートで囲まれてしまうケースや、
+  // \n を含む1行文字列として保存されるケースに対応する。
+  let v = value.trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1);
+  }
+  v = v.replace(/\\n/g, "\n").replace(/\r\n/g, "\n");
+  return v;
+}
+
 function getDriveConfig(): DriveConfig | null {
   const clientEmail = ENV.googleServiceAccountEmail;
   const privateKey = ENV.googleServiceAccountPrivateKey;
@@ -20,7 +34,7 @@ function getDriveConfig(): DriveConfig | null {
     );
   }
 
-  return { clientEmail, privateKey, folderId };
+  return { clientEmail, privateKey: normalizePrivateKey(privateKey), folderId };
 }
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -42,8 +56,17 @@ async function getAccessToken(): Promise<string> {
     return _cachedToken.token;
   }
 
-  const privateKeyPem = config.privateKey.replace(/\\n/g, "\n");
-  const key = await importPKCS8(privateKeyPem, "RS256");
+  const privateKeyPem = config.privateKey;
+  let key: Awaited<ReturnType<typeof importPKCS8>>;
+  try {
+    key = await importPKCS8(privateKeyPem, "RS256");
+  } catch (e) {
+    // jose内部で「Invalid character」などが出ても、原因が分かるようにメッセージを補足する
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Invalid Google service account private key. Ensure GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY is the JSON field "private_key" and is stored as a single line with \\n newlines. (original error: ${msg})`
+    );
+  }
 
   const iat = Math.floor(now / 1000);
   const exp = iat + 3600;

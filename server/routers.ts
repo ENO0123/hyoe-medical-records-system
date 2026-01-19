@@ -854,7 +854,8 @@ export const appRouter = router({
         }
         
         // Convert base64 to buffer
-        const base64Data = input.fileData.replace(/^data:image\/\w+;base64,/, '');
+        // image/svg+xml 等（+ を含む）でも安全に data URL を除去する
+        const base64Data = input.fileData.replace(/^data:[^,]+;base64,/, '');
         const buffer = Buffer.from(base64Data, 'base64');
         
         let imageUrl: string;
@@ -871,6 +872,7 @@ export const appRouter = router({
           });
           imageUrl = `gdrive:${fileId}`;
         } catch (error: any) {
+          console.error("[testResultImages.upload] Upload failed:", error);
           // 開発環境でGoogle Drive認証情報が設定されていない場合は、base64データを直接使用
           if (ENV.isProduction === false && String(error?.message || "").includes("Google Drive credentials missing")) {
             console.warn('[testResultImages.upload] Google Drive credentials not set, using base64 data URL for development');

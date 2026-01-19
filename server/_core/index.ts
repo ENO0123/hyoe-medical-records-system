@@ -41,8 +41,15 @@ async function startServer() {
 
   // Protected image streaming endpoint (Google Drive)
   app.get("/api/test-result-images/:id/content", async (req, res) => {
+    let user: Awaited<ReturnType<typeof sdk.authenticateRequest>>;
     try {
-      const user = await sdk.authenticateRequest(req);
+      user = await sdk.authenticateRequest(req);
+    } catch {
+      res.status(401).send("Unauthorized");
+      return;
+    }
+
+    try {
       const id = Number(req.params.id);
       if (!Number.isFinite(id)) {
         res.status(400).send("Invalid id");
@@ -93,8 +100,8 @@ async function startServer() {
       });
       stream.pipe(res);
     } catch (err) {
-      // auth errors or unexpected
-      res.status(401).send("Unauthorized");
+      console.error("[image-stream] handler error:", err);
+      res.status(500).send("Internal Server Error");
     }
   });
 
