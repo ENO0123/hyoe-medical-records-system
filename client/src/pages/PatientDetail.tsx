@@ -518,8 +518,10 @@ export default function PatientDetail() {
     const matrixData: TestResultMatrix = {};
     const allDates = new Set<string>();
 
-    // 日付は、この大カテゴリ内に存在する結果から作る（カテゴリ選択で日付列が消えないようにする）
-    filteredResults.forEach(r => {
+    // 日付は、画像タブでは全検査日の列を出したい（画像項目は testResults に存在しないことが多い）
+    // それ以外は、この大カテゴリ内に存在する結果から作る（カテゴリ選択で日付列が消えないようにする）
+    const dateSourceResults = mainCategory === "画像" ? (allResults ?? []) : filteredResults;
+    dateSourceResults.forEach(r => {
       const dateStr = new Date(r.result.testDate)
         .toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" })
         .replace(/\//g, ".");
@@ -554,7 +556,7 @@ export default function PatientDetail() {
     });
 
     return { matrix: matrixData, sortedDates: sorted };
-  }, [filteredResults, mainCategory, matrixBaseItems, selectedMatrixCategory]);
+  }, [allResults, filteredResults, mainCategory, matrixBaseItems, selectedMatrixCategory]);
 
   // 選択された日付のみをフィルタリング
   const displayedDates = useMemo(() => {
