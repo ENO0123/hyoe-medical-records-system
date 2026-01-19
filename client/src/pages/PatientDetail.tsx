@@ -2269,15 +2269,9 @@ export default function PatientDetail() {
                               try {
                                 await deleteImageMutation.mutateAsync({ id: image.id });
                                 toast.success("画像を削除しました");
+                                // 画像一覧/マトリクス（全件）を確実に更新する
+                                await utils.testResultImages.list.invalidate();
                                 refetchImages();
-                                // 全ての画像データも再取得してマップを更新
-                                if (allImages) {
-                                  // クエリを無効化して再取得
-                                  utils.testResultImages.list.invalidate({
-                                    patientId,
-                                    itemId: 0,
-                                  });
-                                }
                               } catch (error: any) {
                                 toast.error(error.message || "削除に失敗しました");
                               }
@@ -2327,14 +2321,9 @@ export default function PatientDetail() {
                             mimeType: file.type,
                           });
                           toast.success("画像をアップロードしました");
+                          // 画像一覧/マトリクス（全件）を確実に更新する
+                          await utils.testResultImages.list.invalidate();
                           refetchImages();
-                          // 全ての画像データも再取得してマップを更新
-                          if (allImages) {
-                            utils.testResultImages.list.invalidate({
-                              patientId,
-                              itemId: 0,
-                            });
-                          }
                           // ファイル入力をリセット
                           e.target.value = "";
                         } catch (error: any) {
