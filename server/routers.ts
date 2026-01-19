@@ -6,7 +6,7 @@ import { z } from "zod";
 import { nanoid } from "nanoid";
 import * as db from "./db";
 import { TRPCError } from "@trpc/server";
-import { storagePut } from "./storage";
+import { driveDeleteFile, driveUploadImage } from "./googleDrive";
 import { ENV } from "./_core/env";
 import bcrypt from "bcrypt";
 import { sdk } from "./_core/sdk";
@@ -809,11 +809,18 @@ export const appRouter = router({
           }
         }
         
-        return await db.getTestResultImagesByPatientAndItem(
+        const images = await db.getTestResultImagesByPatientAndItem(
           input.patientId,
           input.itemId,
           input.testDate
         );
+        // gdrive: の場合は、認証付き配信エンドポイントに差し替える（フロント変更を最小化）
+        return images.map((img) => {
+          if (typeof img.imageUrl === "string" && img.imageUrl.startsWith("gdrive:")) {
+            return { ...img, imageUrl: `/api/test-result-images/${img.id}/content` };
+          }
+          return img;
+        });
       }),
     
     get: protectedProcedure
@@ -852,17 +859,21 @@ export const appRouter = router({
         
         let imageUrl: string;
         
-        // 開発環境でストレージ認証情報が設定されていない場合は、base64データを直接使用
+        // 開発環境で認証情報が設定されていない場合は、base64データを直接使用
         try {
-          // Upload to storage
+          // Upload to Google Drive
           const fileExtension = input.fileName.split('.').pop() || 'jpg';
-          const storageKey = `test-results/${input.patientId}/${input.itemId}/${Date.now()}.${fileExtension}`;
-          const result = await storagePut(storageKey, buffer, input.mimeType);
-          imageUrl = result.url;
+          const fileName = `test-results_${input.patientId}_${input.itemId}_${Date.now()}.${fileExtension}`;
+          const { fileId } = await driveUploadImage({
+            buffer,
+            mimeType: input.mimeType,
+            fileName,
+          });
+          imageUrl = `gdrive:${fileId}`;
         } catch (error: any) {
-          // 開発環境でストレージ認証情報が設定されていない場合は、base64データを直接使用
-          if (ENV.isProduction === false && error.message?.includes('Storage proxy credentials missing')) {
-            console.warn('[testResultImages.upload] Storage credentials not set, using base64 data URL for development');
+          // 開発環境でGoogle Drive認証情報が設定されていない場合は、base64データを直接使用
+          if (ENV.isProduction === false && String(error?.message || "").includes("Google Drive credentials missing")) {
+            console.warn('[testResultImages.upload] Google Drive credentials not set, using base64 data URL for development');
             // base64データをdata URLとして保存
             imageUrl = input.fileData; // 元のbase64データ（data:image/...形式）を使用
           } else {
@@ -949,6 +960,19 @@ export const appRouter = router({
           }
         }
         
+        // Google Driveのファイル削除（DB削除に失敗してもストレージ側を残すのは危険なので、先に試す）
+        if (typeof image.imageUrl === "string" && image.imageUrl.startsWith("gdrive:")) {
+          const fileId = image.imageUrl.slice("gdrive:".length);
+          if (fileId) {
+            try {
+              await driveDeleteFile(fileId);
+            } catch (e) {
+              // Drive側削除に失敗しても、DB削除は継続（運用上はログで追えるようにする）
+              console.warn("[testResultImages.delete] Failed to delete Google Drive file:", e);
+            }
+          }
+        }
+
         await db.deleteTestResultImage(input.id);
         return { success: true };
       }),

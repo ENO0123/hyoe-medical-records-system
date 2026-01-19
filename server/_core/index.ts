@@ -7,6 +7,9 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic } from "./vite";
+import { sdk } from "./sdk";
+import * as db from "../db";
+import { driveGetFileStream } from "../googleDrive";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -35,6 +38,66 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
+
+  // Protected image streaming endpoint (Google Drive)
+  app.get("/api/test-result-images/:id/content", async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req);
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        res.status(400).send("Invalid id");
+        return;
+      }
+
+      const image = await db.getTestResultImageById(id);
+      if (!image) {
+        res.status(404).send("Not found");
+        return;
+      }
+
+      const patient = await db.getPatientById(image.patientId);
+      if (!patient) {
+        res.status(404).send("Not found");
+        return;
+      }
+
+      if (user.role !== "admin") {
+        const doctor = await db.getDoctorByUserId(user.id);
+        if (patient.doctorId !== doctor?.id) {
+          res.status(403).send("Forbidden");
+          return;
+        }
+      }
+
+      if (typeof image.imageUrl !== "string" || !image.imageUrl.startsWith("gdrive:")) {
+        res.status(404).send("Not found");
+        return;
+      }
+
+      const fileId = image.imageUrl.slice("gdrive:".length);
+      if (!fileId) {
+        res.status(500).send("Invalid image reference");
+        return;
+      }
+
+      const { stream, contentType } = await driveGetFileStream(fileId);
+      res.setHeader(
+        "content-type",
+        image.mimeType || contentType || "application/octet-stream"
+      );
+      res.setHeader("cache-control", "private, max-age=60");
+      stream.on("error", err => {
+        console.error("[image-stream] stream error:", err);
+        if (!res.headersSent) res.status(500);
+        res.end();
+      });
+      stream.pipe(res);
+    } catch (err) {
+      // auth errors or unexpected
+      res.status(401).send("Unauthorized");
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
