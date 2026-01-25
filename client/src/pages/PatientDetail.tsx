@@ -527,6 +527,16 @@ export default function PatientDetail() {
         .replace(/\//g, ".");
       allDates.add(dateStr);
     });
+    
+    // 画像タブでは「画像のみ登録した日付」も列に出す（検査結果が無い日でも画像は存在しうる）
+    if (mainCategory === "画像" && allImages) {
+      allImages.forEach(img => {
+        const dateStr = new Date(img.testDate as any)
+          .toLocaleDateString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit" })
+          .replace(/\//g, ".");
+        allDates.add(dateStr);
+      });
+    }
 
     // 行（検査項目）は testItems を基準に作成し、未入力でも表示する
     const itemsForMatrix =
@@ -556,7 +566,7 @@ export default function PatientDetail() {
     });
 
     return { matrix: matrixData, sortedDates: sorted };
-  }, [allResults, filteredResults, mainCategory, matrixBaseItems, selectedMatrixCategory]);
+  }, [allImages, allResults, filteredResults, mainCategory, matrixBaseItems, selectedMatrixCategory]);
 
   // 選択された日付のみをフィルタリング
   const displayedDates = useMemo(() => {
